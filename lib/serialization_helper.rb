@@ -74,17 +74,19 @@ module SerializationHelper
       load_records(table, column_names, data['records'])
       reset_pk_sequence!(table)
     end
+    
 
     def self.load_records(table, column_names, records)
       if column_names.nil?
         return
       end
-      columns = column_names.map{|cn| ActiveRecord::Base.connection.columns(table).detect{|c| c.name == cn}}
       quoted_column_names = column_names.map { |column| ActiveRecord::Base.connection.quote_column_name(column) }.join(',')
       quoted_table_name = SerializationHelper::Utils.quote_table(table)
+      sql_cols = ActiveRecord::Base.connection.columns( quoted_table_name )
+      columns = Hash.new
+      sql_cols.each{ |col| columns[ col.name ] = col }
       records.each do |record|
-        quoted_values = record.zip(columns).map{|c| ActiveRecord::Base.connection.quote(c.first, c.last)}.join(',')
-        ActiveRecord::Base.connection.execute("INSERT INTO #{quoted_table_name} (#{quoted_column_names}) VALUES (#{quoted_values})")
+        ActiveRecord::Base.connection.execute("INSERT INTO #{quoted_table_name} (#{quoted_column_names}) VALUES (#{i=-1;record.map { |r| i+=1;ActiveRecord::Base.connection.quote(r,columns[ column_names[i] ] ) }.join(',')})")
       end
     end
 
@@ -120,10 +122,25 @@ module SerializationHelper
       end
       records
     end
+    
+    def self.convert_binary( records, columns )
+      records.each do |record|
+        columns.each do |column|
+    	  if column.class.respond_to?(:binary_to_string) and !record[column.name].nil? then
+	    record[column.name] = column.class.binary_to_string( record[column.name] )
+	  end
+        end
+      end
+      records
+    end
 
     def self.boolean_columns(table)
       columns = ActiveRecord::Base.connection.columns(table).reject { |c| silence_warnings { c.type != :boolean } }
       columns.map { |c| c.name }
+    end
+    
+    def self.binary_columns( table )
+      ActiveRecord::Base.connection.columns(table).reject { |c| silence_warnings { c.type != :binary } }
     end
 
     def self.is_boolean(value)
@@ -174,6 +191,7 @@ module SerializationHelper
       pages = (total_count.to_f / records_per_page).ceil - 1
       id = table_column_names(table).first
       boolean_columns = SerializationHelper::Utils.boolean_columns(table)
+      binary_columns = SerializationHelper::Utils.binary_columns(table)
       quoted_table_name = SerializationHelper::Utils.quote_table(table)
 
       (0..pages).to_a.each do |page|
@@ -182,6 +200,7 @@ module SerializationHelper
         )
         records = ActiveRecord::Base.connection.select_all(sql)
         records = SerializationHelper::Utils.convert_booleans(records, boolean_columns)
+        records = SerializationHelper::Utils.convert_binary(records, binary_columns)
         yield records
       end
     end
