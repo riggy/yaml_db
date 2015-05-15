@@ -128,9 +128,24 @@ module YamlDb
         ['t', '1', true, 1].include?(value)
       end
 
+      def self.convert_binary( records, columns )
+        records.each do |record|
+          columns.each do |column|
+            if column.class.respond_to?(:binary_to_string) and !record[column.name].nil? then
+              record[column.name] = column.class.binary_to_string( record[column.name] )
+            end
+          end
+        end
+        records
+      end
+
       def self.boolean_columns(table)
         columns = ActiveRecord::Base.connection.columns(table).reject { |c| silence_warnings { c.type != :boolean } }
         columns.map { |c| c.name }
+      end
+
+      def self.binary_columns( table )
+        ActiveRecord::Base.connection.columns(table).reject { |c| silence_warnings { c.type != :binary } }
       end
 
       def self.is_boolean(value)
@@ -181,12 +196,14 @@ module YamlDb
         pages = (total_count.to_f / records_per_page).ceil - 1
         id = table_column_names(table).first
         boolean_columns = Utils.boolean_columns(table)
+        binary_columns = SerializationHelper::Utils.binary_columns(table)
         quoted_table_name = Utils.quote_table(table)
 
         (0..pages).to_a.each do |page|
           query = Arel::Table.new(table, ActiveRecord::Base).order(id).skip(records_per_page*page).take(records_per_page).project(Arel.sql('*'))
           records = ActiveRecord::Base.connection.select_all(query.to_sql)
           records = Utils.convert_booleans(records, boolean_columns)
+          records = SerializationHelper::Utils.convert_binary(records, binary_columns)
           yield records
         end
       end
